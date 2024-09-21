@@ -35,5 +35,7 @@ func main() {
 		log.Fatalf("Failed to publish: %v \n", err)
 	}
 
+	<-signalChan
+
 	fmt.Println("Shutting down.")
 }
