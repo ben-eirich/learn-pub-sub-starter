@@ -26,6 +26,11 @@ func main() {
 		log.Fatalf("%v\n", err)
 	}
 
+	_, _, err = pubsub.DeclareAndBind(con, routing.ExchangePerilTopic, "game_logs", "game_logs.*", pubsub.QueueDurable)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	gamelogic.PrintServerHelp()
 
 	for {
