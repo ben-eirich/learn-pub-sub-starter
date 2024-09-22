@@ -37,6 +37,17 @@ func main() {
 	}
 
 	gameState := gamelogic.NewGameState(name)
+
+	err = pubsub.SubscribeJSON(conn,
+		routing.ExchangePerilDirect,
+		routing.PauseKey+"."+name,
+		routing.PauseKey,
+		pubsub.QueueTransient,
+		handlerPause(gameState))
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	for {
 		input := gamelogic.GetInput()
 		if len(input) == 0 {
@@ -51,13 +62,29 @@ func main() {
 		} else if input[0] == "status" {
 			gameState.CommandStatus()
 		} else if input[0] == "spawn" {
-			gameState.CommandSpawn(input)
+			err := gameState.CommandSpawn(input)
+			if err != nil {
+				fmt.Println(err)
+				continue
+			}
 			// TODO check error, and publish
 		} else if input[0] == "move" {
-			gameState.CommandMove(input)
+			armyMove, err := gameState.CommandMove(input)
+			if err != nil {
+				fmt.Println(err)
+				continue
+			}
+			_ = armyMove
 			// TODO check error, and publish
 		} else {
 			fmt.Println("Unknown command")
 		}
+	}
+}
+
+func handlerPause(gs *gamelogic.GameState) func(routing.PlayingState) {
+	return func(p routing.PlayingState) {
+		defer fmt.Print("> ")
+		gs.HandlePause(p)
 	}
 }
