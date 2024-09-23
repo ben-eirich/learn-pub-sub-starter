@@ -26,16 +26,6 @@ func main() {
 		log.Fatal(err)
 	}
 
-	_, _, err = pubsub.DeclareAndBind(
-		conn,
-		routing.ExchangePerilDirect,
-		fmt.Sprintf("pause.%s", name),
-		routing.PauseKey,
-		pubsub.QueueTransient)
-	if err != nil {
-		log.Fatal(err)
-	}
-
 	gameState := gamelogic.NewGameState(name)
 
 	err = pubsub.SubscribeJSON(conn,
@@ -44,6 +34,26 @@ func main() {
 		routing.PauseKey,
 		pubsub.QueueTransient,
 		handlerPause(gameState))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	armyMoveCh, _, err := pubsub.DeclareAndBind(
+		conn,
+		routing.ExchangePerilDirect,
+		routing.ArmyMovesPrefix+".*",
+		routing.ArmyMovesPrefix,
+		pubsub.QueueTransient)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	err = pubsub.SubscribeJSON(conn,
+		routing.ExchangePerilDirect,
+		routing.ArmyMovesPrefix+"."+name,
+		routing.ArmyMovesPrefix,
+		pubsub.QueueTransient,
+		handlerMove(gameState))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -62,29 +72,51 @@ func main() {
 		} else if input[0] == "status" {
 			gameState.CommandStatus()
 		} else if input[0] == "spawn" {
+			// run spawn command
 			err := gameState.CommandSpawn(input)
 			if err != nil {
 				fmt.Println(err)
 				continue
 			}
-			// TODO check error, and publish
+			// TODO publish
 		} else if input[0] == "move" {
+			// run move comand
 			armyMove, err := gameState.CommandMove(input)
 			if err != nil {
 				fmt.Println(err)
 				continue
 			}
-			_ = armyMove
-			// TODO check error, and publish
+
+			// publish move
+			err = pubsub.PublishJSON(armyMoveCh, routing.ExchangePerilDirect, routing.ArmyMovesPrefix, armyMove)
+			if err != nil {
+				log.Fatalf("Failed to publish: %v \n", err)
+			}
 		} else {
 			fmt.Println("Unknown command")
 		}
 	}
 }
 
-func handlerPause(gs *gamelogic.GameState) func(routing.PlayingState) {
-	return func(p routing.PlayingState) {
+func handlerPause(gs *gamelogic.GameState) func(routing.PlayingState) pubsub.AckType {
+	return func(p routing.PlayingState) pubsub.AckType {
 		defer fmt.Print("> ")
 		gs.HandlePause(p)
+		return pubsub.Ack
+	}
+}
+
+func handlerMove(gs *gamelogic.GameState) func(gamelogic.ArmyMove) pubsub.AckType {
+	return func(move gamelogic.ArmyMove) pubsub.AckType {
+		defer fmt.Print("> ")
+		outcome := gs.HandleMove(move)
+		switch outcome {
+		case gamelogic.MoveOutComeSafe:
+			return pubsub.Ack
+		case gamelogic.MoveOutcomeMakeWar:
+			return pubsub.Ack
+		default:
+			return pubsub.NackDiscard
+		}
 	}
 }
