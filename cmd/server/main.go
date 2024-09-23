@@ -12,50 +12,71 @@ import (
 )
 
 func main() {
-	fmt.Println("Starting Peril server...")
-	connectionString := "amqp://guest:guest@localhost:5672/"
-	con, err := amqp.Dial(connectionString)
-	if err != nil {
-		log.Fatalf("Error connecting to RabbitMQ. Is it running?\n %v\n", err)
-	}
-	defer con.Close()
-	fmt.Println("RabbitMQ connection successful!")
+	const rabbitConnString = "amqp://guest:guest@localhost:5672/"
 
-	mqch, err := con.Channel()
+	conn, err := amqp.Dial(rabbitConnString)
 	if err != nil {
-		log.Fatalf("%v\n", err)
+		log.Fatalf("could not connect to RabbitMQ: %v", err)
+	}
+	defer conn.Close()
+	fmt.Println("Peril game server connected to RabbitMQ!")
+
+	publishCh, err := conn.Channel()
+	if err != nil {
+		log.Fatalf("could not create channel: %v", err)
 	}
 
-	_, _, err = pubsub.DeclareAndBind(con, routing.ExchangePerilTopic, "game_logs", "game_logs.*", pubsub.QueueDurable)
+	_, queue, err := pubsub.DeclareAndBind(
+		conn,
+		routing.ExchangePerilTopic,
+		routing.GameLogSlug,
+		routing.GameLogSlug+".*",
+		pubsub.SimpleQueueDurable,
+	)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("could not subscribe to pause: %v", err)
 	}
+	fmt.Printf("Queue %v declared and bound!\n", queue.Name)
 
 	gamelogic.PrintServerHelp()
 
 	for {
-		input := gamelogic.GetInput()
-		if len(input) == 0 {
+		words := gamelogic.GetInput()
+		if len(words) == 0 {
 			continue
-		} else if input[0] == "quit" {
-			fmt.Println("Exiting")
-			break
-		} else if input[0] == "help" {
-			gamelogic.PrintServerHelp()
-		} else if input[0] == "pause" {
-			err = pubsub.PublishJSON(mqch, routing.ExchangePerilDirect, routing.PauseKey, routing.PlayingState{IsPaused: true})
+		}
+		switch words[0] {
+		case "pause":
+			fmt.Println("Publishing paused game state")
+			err = pubsub.PublishJSON(
+				publishCh,
+				routing.ExchangePerilDirect,
+				routing.PauseKey,
+				routing.PlayingState{
+					IsPaused: true,
+				},
+			)
 			if err != nil {
-				log.Fatalf("Failed to publish: %v \n", err)
+				log.Printf("could not publish time: %v", err)
 			}
-		} else if input[0] == "resume" {
-			err = pubsub.PublishJSON(mqch, routing.ExchangePerilDirect, routing.PauseKey, routing.PlayingState{IsPaused: false})
+		case "resume":
+			fmt.Println("Publishing resumes game state")
+			err = pubsub.PublishJSON(
+				publishCh,
+				routing.ExchangePerilDirect,
+				routing.PauseKey,
+				routing.PlayingState{
+					IsPaused: false,
+				},
+			)
 			if err != nil {
-				log.Fatalf("Failed to publish: %v \n", err)
+				log.Printf("could not publish time: %v", err)
 			}
-		} else {
-			fmt.Printf("I didn't understand '%s' command.\n", input[0])
+		case "quit":
+			log.Println("goodbye")
+			return
+		default:
+			fmt.Println("unknown command")
 		}
 	}
-
-	fmt.Println("Shutting down.")
 }
